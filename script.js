@@ -25,14 +25,16 @@ const outputs = {
   variation: document.querySelector('#variationValue')
 };
 
-let position = 50; // 0 = bottom, 100 = top
+let position = 50;
 let direction = 1;
 let speed = 1;
+let targetSpeed = 1;
 let running = false;
 let paused = false;
 let pauseUntil = 0;
 let lastTime = 0;
 let nextSpeedChange = 0;
+let nextRandomPause = 0;
 
 const random = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -48,40 +50,29 @@ function readSettings() {
   };
 }
 
-function setSpeed(next, now) {
+// The speed now changes progressively instead of jumping instantly.
+function chooseNewSpeed(now) {
   const s = readSettings();
-  speed = clamp(next, s.minSpeed, Math.max(s.minSpeed, s.maxSpeed));
+  const min = Math.min(s.minSpeed, s.maxSpeed);
+  const max = Math.max(s.minSpeed, s.maxSpeed);
+  const base = random(min, max);
+  targetSpeed = clamp(base * (1 + random(-s.variation, s.variation)), min, max);
   nextSpeedChange = now + random(1600, 5000);
 }
 
-function chooseNewSpeed(now) {
-  const s = readSettings();
-  const base = random(s.minSpeed, Math.max(s.minSpeed, s.maxSpeed));
-  const variation = 1 + random(-s.variation, s.variation);
-  setSpeed(base * variation, now);
-}
-
-function choosePause() {
+// Important: pauses NEVER move the marker.
+// The marker stays exactly where it arrived and only stops there.
+function choosePause(now) {
   const s = readSettings();
   if (Math.random() > s.pauseChance) return false;
 
-  // Favor all three interesting cases: top, bottom or anywhere.
-  const type = Math.random();
-  if (type < 0.25) position = 100;
-  else if (type < 0.50) position = 0;
-  else position = random(8, 92);
-
-  return true;
-}
-
-function beginPause(now) {
-  const s = readSettings();
   const min = Math.min(s.minPause, s.maxPause);
   const max = Math.max(s.minPause, s.maxPause);
   pauseUntil = now + random(min, max) * 1000;
   paused = true;
   marker.classList.add('paused');
   phaseEl.textContent = 'PAUSED';
+  return true;
 }
 
 function updateUI() {
@@ -96,31 +87,41 @@ function frame(now) {
   lastTime = now;
 
   if (running && !paused) {
+    // Smoothly approach the new speed.
+    const smoothing = 1 - Math.exp(-dt / 900);
+    speed += (targetSpeed - speed) * smoothing;
+
     if (now >= nextSpeedChange) chooseNewSpeed(now);
 
-    // About 30 seconds for a full top-to-bottom trip at 1×.
+    // Continuous movement. No random position assignment is ever made here.
     position += direction * (dt / 300) * speed;
 
     if (position >= 100) {
       position = 100;
       direction = -1;
-      if (choosePause()) beginPause(now);
+      if (!choosePause(now)) nextRandomPause = now + random(1200, 5000);
     } else if (position <= 0) {
       position = 0;
       direction = 1;
-      if (choosePause()) beginPause(now);
-    } else if (Math.random() < 0.0009 * dt && choosePause()) {
-      beginPause(now);
+      if (!choosePause(now)) nextRandomPause = now + random(1200, 5000);
+    } else if (now >= nextRandomPause) {
+      if (choosePause(now)) {
+        nextRandomPause = Infinity;
+      } else {
+        nextRandomPause = now + random(1200, 5000);
+      }
     }
 
-    phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
+    if (!paused) {
+      phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
+    }
   }
 
   if (running && paused && now >= pauseUntil) {
     paused = false;
     marker.classList.remove('paused');
+    nextRandomPause = now + random(1800, 6000);
     phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
-    chooseNewSpeed(now);
   }
 
   updateUI();
@@ -133,7 +134,9 @@ function start() {
   marker.classList.remove('paused');
   const now = performance.now();
   lastTime = now;
+  nextRandomPause = now + random(1500, 5000);
   chooseNewSpeed(now);
+  speed = targetSpeed;
   statusEl.textContent = 'RUNNING';
   startBtn.disabled = true;
   pauseBtn.disabled = false;
@@ -162,9 +165,11 @@ function reset() {
   running = false;
   paused = false;
   pauseUntil = 0;
+  nextRandomPause = 0;
   position = 50;
   direction = 1;
   speed = 1;
+  targetSpeed = 1;
   marker.classList.remove('paused');
   statusEl.textContent = 'READY';
   phaseEl.textContent = 'MOVING';
