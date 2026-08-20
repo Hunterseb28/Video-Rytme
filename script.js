@@ -26,7 +26,7 @@ const outputs = {
 };
 
 let position = 50;
-let direction = 1;
+let destination = 50;
 let speed = 1;
 let targetSpeed = 1;
 let running = false;
@@ -34,7 +34,6 @@ let paused = false;
 let pauseUntil = 0;
 let lastTime = 0;
 let nextSpeedChange = 0;
-let nextRandomPause = 0;
 
 const random = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -50,21 +49,41 @@ function readSettings() {
   };
 }
 
-// The speed now changes progressively instead of jumping instantly.
-function chooseNewSpeed(now) {
+function chooseSpeed(now) {
   const s = readSettings();
   const min = Math.min(s.minSpeed, s.maxSpeed);
   const max = Math.max(s.minSpeed, s.maxSpeed);
-  const base = random(min, max);
-  targetSpeed = clamp(base * (1 + random(-s.variation, s.variation)), min, max);
+  targetSpeed = random(min, max);
   nextSpeedChange = now + random(1600, 5000);
 }
 
-// Important: pauses NEVER move the marker.
-// The marker stays exactly where it arrived and only stops there.
-function choosePause(now) {
+// Pick a NEW destination only after the marker has reached the current one.
+// This is the key to preventing teleportation.
+function chooseDestination(now) {
   const s = readSettings();
-  if (Math.random() > s.pauseChance) return false;
+  const oldDestination = destination;
+
+  // Sometimes go exactly to an edge, otherwise choose any point on the bar.
+  const roll = Math.random();
+  if (roll < 0.18) destination = 0;
+  else if (roll < 0.36) destination = 100;
+  else destination = random(5, 95);
+
+  // Avoid selecting essentially the same position twice.
+  if (Math.abs(destination - oldDestination) < 8) {
+    destination = oldDestination < 50 ? random(60, 95) : random(5, 40);
+  }
+
+  targetSpeed = clamp(targetSpeed, Math.min(s.minSpeed, s.maxSpeed), Math.max(s.minSpeed, s.maxSpeed));
+  phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
+}
+
+function startPause(now) {
+  const s = readSettings();
+  if (Math.random() > s.pauseChance) {
+    chooseDestination(now);
+    return;
+  }
 
   const min = Math.min(s.minPause, s.maxPause);
   const max = Math.max(s.minPause, s.maxPause);
@@ -72,7 +91,6 @@ function choosePause(now) {
   paused = true;
   marker.classList.add('paused');
   phaseEl.textContent = 'PAUSED';
-  return true;
 }
 
 function updateUI() {
@@ -87,41 +105,33 @@ function frame(now) {
   lastTime = now;
 
   if (running && !paused) {
-    // Smoothly approach the new speed.
-    const smoothing = 1 - Math.exp(-dt / 900);
+    if (now >= nextSpeedChange) chooseSpeed(now);
+
+    // Smooth acceleration/deceleration toward the selected speed.
+    const smoothing = 1 - Math.exp(-dt / 700);
     speed += (targetSpeed - speed) * smoothing;
 
-    if (now >= nextSpeedChange) chooseNewSpeed(now);
+    const distance = Math.abs(destination - position);
+    const step = (dt / 1000) * speed * 18;
 
-    // Continuous movement. No random position assignment is ever made here.
-    position += direction * (dt / 300) * speed;
-
-    if (position >= 100) {
-      position = 100;
-      direction = -1;
-      if (!choosePause(now)) nextRandomPause = now + random(1200, 5000);
-    } else if (position <= 0) {
-      position = 0;
-      direction = 1;
-      if (!choosePause(now)) nextRandomPause = now + random(1200, 5000);
-    } else if (now >= nextRandomPause) {
-      if (choosePause(now)) {
-        nextRandomPause = Infinity;
-      } else {
-        nextRandomPause = now + random(1200, 5000);
-      }
+    // Move ONLY toward the destination. Never assign a random position here.
+    if (distance > 0.01) {
+      const amount = Math.min(distance, step);
+      position += Math.sign(destination - position) * amount;
     }
 
-    if (!paused) {
-      phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
+    // Destination reached: snap only by the tiny remaining distance, then pause.
+    if (Math.abs(destination - position) <= 0.01) {
+      position = destination;
+      startPause(now);
     }
   }
 
   if (running && paused && now >= pauseUntil) {
     paused = false;
     marker.classList.remove('paused');
-    nextRandomPause = now + random(1800, 6000);
-    phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
+    chooseDestination(now);
+    phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
   }
 
   updateUI();
@@ -132,11 +142,15 @@ function start() {
   running = true;
   paused = false;
   marker.classList.remove('paused');
+
   const now = performance.now();
   lastTime = now;
-  nextRandomPause = now + random(1500, 5000);
-  chooseNewSpeed(now);
+  chooseSpeed(now);
   speed = targetSpeed;
+
+  // First movement starts from the current visible position.
+  chooseDestination(now);
+
   statusEl.textContent = 'RUNNING';
   startBtn.disabled = true;
   pauseBtn.disabled = false;
@@ -145,6 +159,7 @@ function start() {
 
 function togglePause() {
   if (!running) return;
+
   paused = !paused;
   if (paused) {
     pauseUntil = Infinity;
@@ -153,11 +168,12 @@ function togglePause() {
     pauseBtn.textContent = 'RESUME';
     statusEl.textContent = 'PAUSED';
   } else {
+    paused = false;
     marker.classList.remove('paused');
-    phaseEl.textContent = direction > 0 ? 'MOVING UP' : 'MOVING DOWN';
+    lastTime = performance.now();
+    phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
     pauseBtn.textContent = 'PAUSE';
     statusEl.textContent = 'RUNNING';
-    lastTime = performance.now();
   }
 }
 
@@ -165,14 +181,14 @@ function reset() {
   running = false;
   paused = false;
   pauseUntil = 0;
-  nextRandomPause = 0;
   position = 50;
-  direction = 1;
+  destination = 50;
   speed = 1;
   targetSpeed = 1;
+
   marker.classList.remove('paused');
   statusEl.textContent = 'READY';
-  phaseEl.textContent = 'MOVING';
+  phaseEl.textContent = 'READY';
   startBtn.disabled = false;
   pauseBtn.disabled = true;
   pauseBtn.textContent = 'PAUSE';
