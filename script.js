@@ -25,8 +25,8 @@ const outputs = {
   variation: document.querySelector('#variationValue')
 };
 
-let position = 50;
-let destination = 50;
+let position = 0.5;
+let destination = 0.5;
 let speed = 1;
 let targetSpeed = 1;
 let running = false;
@@ -34,9 +34,9 @@ let paused = false;
 let pauseUntil = 0;
 let lastTime = 0;
 let nextSpeedChange = 0;
+let pauseAfterArrival = false;
 
 const random = (min, max) => min + Math.random() * (max - min);
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 function readSettings() {
   return {
@@ -51,40 +51,30 @@ function readSettings() {
 
 function chooseSpeed(now) {
   const s = readSettings();
-  const min = Math.min(s.minSpeed, s.maxSpeed);
-  const max = Math.max(s.minSpeed, s.maxSpeed);
-  targetSpeed = random(min, max);
-  nextSpeedChange = now + random(1600, 5000);
+  targetSpeed = random(Math.min(s.minSpeed, s.maxSpeed), Math.max(s.minSpeed, s.maxSpeed));
+  nextSpeedChange = now + random(1800, 4500);
 }
 
-// Pick a NEW destination only after the marker has reached the current one.
-// This is the key to preventing teleportation.
 function chooseDestination(now) {
   const s = readSettings();
-  const oldDestination = destination;
-
-  // Sometimes go exactly to an edge, otherwise choose any point on the bar.
+  const previous = destination;
   const roll = Math.random();
-  if (roll < 0.18) destination = 0;
-  else if (roll < 0.36) destination = 100;
-  else destination = random(5, 95);
 
-  // Avoid selecting essentially the same position twice.
-  if (Math.abs(destination - oldDestination) < 8) {
-    destination = oldDestination < 50 ? random(60, 95) : random(5, 40);
+  if (roll < 0.20) destination = 0;
+  else if (roll < 0.40) destination = 1;
+  else destination = random(0.05, 0.95);
+
+  if (Math.abs(destination - previous) < 0.08) {
+    destination = previous < 0.5 ? random(0.60, 0.95) : random(0.05, 0.40);
   }
 
-  targetSpeed = clamp(targetSpeed, Math.min(s.minSpeed, s.maxSpeed), Math.max(s.minSpeed, s.maxSpeed));
+  // Decide whether to stop after reaching this destination.
+  pauseAfterArrival = Math.random() <= s.pauseChance;
   phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
 }
 
-function startPause(now) {
+function beginPause(now) {
   const s = readSettings();
-  if (Math.random() > s.pauseChance) {
-    chooseDestination(now);
-    return;
-  }
-
   const min = Math.min(s.minPause, s.maxPause);
   const max = Math.max(s.minPause, s.maxPause);
   pauseUntil = now + random(min, max) * 1000;
@@ -94,36 +84,41 @@ function startPause(now) {
 }
 
 function updateUI() {
-  marker.style.top = `${100 - position}%`;
-  positionEl.textContent = `${Math.round(position)}%`;
+  // Only this one place writes the marker position.
+  // It uses a single CSS property every frame, so there is no second animation fighting it.
+  marker.style.top = `${(1 - position) * 100}%`;
+  positionEl.textContent = `${Math.round(position * 100)}%`;
   speedEl.textContent = `${speed.toFixed(2)}×`;
 }
 
 function frame(now) {
   if (!lastTime) lastTime = now;
-  const dt = Math.min(50, now - lastTime);
+  const dt = Math.min(50, Math.max(0, now - lastTime));
   lastTime = now;
 
   if (running && !paused) {
     if (now >= nextSpeedChange) chooseSpeed(now);
 
-    // Smooth acceleration/deceleration toward the selected speed.
-    const smoothing = 1 - Math.exp(-dt / 700);
+    // Smooth speed changes, never a position jump.
+    const smoothing = 1 - Math.exp(-dt / 800);
     speed += (targetSpeed - speed) * smoothing;
 
-    const distance = Math.abs(destination - position);
-    const step = (dt / 1000) * speed * 18;
+    const distance = destination - position;
+    const pixelsPerSecond = 140 * speed;
 
-    // Move ONLY toward the destination. Never assign a random position here.
-    if (distance > 0.01) {
-      const amount = Math.min(distance, step);
-      position += Math.sign(destination - position) * amount;
+    // Move in continuous time toward the destination.
+    // The final frame is clamped only to the destination itself.
+    if (Math.abs(distance) > 0.000001) {
+      const viewport = Math.max(1, marker.parentElement?.clientHeight || window.innerHeight);
+      const normalizedStep = (pixelsPerSecond * dt / 1000) / viewport;
+      const step = Math.min(Math.abs(distance), normalizedStep);
+      position += Math.sign(distance) * step;
     }
 
-    // Destination reached: snap only by the tiny remaining distance, then pause.
-    if (Math.abs(destination - position) <= 0.01) {
+    if (Math.abs(destination - position) <= 0.000001) {
       position = destination;
-      startPause(now);
+      if (pauseAfterArrival) beginPause(now);
+      else chooseDestination(now);
     }
   }
 
@@ -147,8 +142,6 @@ function start() {
   lastTime = now;
   chooseSpeed(now);
   speed = targetSpeed;
-
-  // First movement starts from the current visible position.
   chooseDestination(now);
 
   statusEl.textContent = 'RUNNING';
@@ -181,10 +174,11 @@ function reset() {
   running = false;
   paused = false;
   pauseUntil = 0;
-  position = 50;
-  destination = 50;
+  position = 0.5;
+  destination = 0.5;
   speed = 1;
   targetSpeed = 1;
+  pauseAfterArrival = false;
 
   marker.classList.remove('paused');
   statusEl.textContent = 'READY';
