@@ -1,4 +1,5 @@
 const marker = document.querySelector('#marker');
+const trackWrap = document.querySelector('.track-wrap');
 const positionEl = document.querySelector('#position');
 const speedEl = document.querySelector('#speed');
 const phaseEl = document.querySelector('#phase');
@@ -8,27 +9,21 @@ const pauseBtn = document.querySelector('#pauseBtn');
 const resetBtn = document.querySelector('#resetBtn');
 
 const settings = {
-  minSpeed: document.querySelector('#minSpeed'),
-  maxSpeed: document.querySelector('#maxSpeed'),
-  minPause: document.querySelector('#minPause'),
-  maxPause: document.querySelector('#maxPause'),
-  pauseChance: document.querySelector('#pauseChance'),
-  variation: document.querySelector('#variation')
+  minSpeed: document.querySelector('#minSpeed'), maxSpeed: document.querySelector('#maxSpeed'),
+  minPause: document.querySelector('#minPause'), maxPause: document.querySelector('#maxPause'),
+  pauseChance: document.querySelector('#pauseChance'), variation: document.querySelector('#variation')
 };
-
 const outputs = {
-  minSpeed: document.querySelector('#minSpeedValue'),
-  maxSpeed: document.querySelector('#maxSpeedValue'),
-  minPause: document.querySelector('#minPauseValue'),
-  maxPause: document.querySelector('#maxPauseValue'),
-  pauseChance: document.querySelector('#pauseChanceValue'),
-  variation: document.querySelector('#variationValue')
+  minSpeed: document.querySelector('#minSpeedValue'), maxSpeed: document.querySelector('#maxSpeedValue'),
+  minPause: document.querySelector('#minPauseValue'), maxPause: document.querySelector('#maxPauseValue'),
+  pauseChance: document.querySelector('#pauseChanceValue'), variation: document.querySelector('#variationValue')
 };
 
-let position = 0.5;
-let destination = 0.5;
-let speed = 1;
-let targetSpeed = 1;
+// Position is stored in PIXELS, not percentages. This prevents any 63% -> 0% visual jump.
+let y = 0;
+let targetY = 0;
+let speed = 120;
+let targetSpeed = 120;
 let running = false;
 let paused = false;
 let pauseUntil = 0;
@@ -40,83 +35,79 @@ const random = (min, max) => min + Math.random() * (max - min);
 
 function readSettings() {
   return {
-    minSpeed: Number(settings.minSpeed.value),
-    maxSpeed: Number(settings.maxSpeed.value),
-    minPause: Number(settings.minPause.value),
-    maxPause: Number(settings.maxPause.value),
-    pauseChance: Number(settings.pauseChance.value) / 100,
-    variation: Number(settings.variation.value) / 100
+    minSpeed: Number(settings.minSpeed.value), maxSpeed: Number(settings.maxSpeed.value),
+    minPause: Number(settings.minPause.value), maxPause: Number(settings.maxPause.value),
+    pauseChance: Number(settings.pauseChance.value) / 100
   };
+}
+
+function trackHeight() {
+  return Math.max(1, trackWrap.clientHeight);
+}
+
+function setMarkerPixelPosition() {
+  // One and only one writer controls the marker transform.
+  marker.style.transform = `translate3d(-50%, ${y}px, 0)`;
+  const h = trackHeight();
+  const percent = Math.round((1 - y / h) * 100);
+  positionEl.textContent = `${Math.max(0, Math.min(100, percent))}%`;
+  speedEl.textContent = `${(speed / 120).toFixed(2)}×`;
 }
 
 function chooseSpeed(now) {
   const s = readSettings();
-  targetSpeed = random(Math.min(s.minSpeed, s.maxSpeed), Math.max(s.minSpeed, s.maxSpeed));
+  targetSpeed = random(Math.min(s.minSpeed, s.maxSpeed), Math.max(s.minSpeed, s.maxSpeed)) * 120;
   nextSpeedChange = now + random(1800, 4500);
 }
 
 function chooseDestination(now) {
-  const s = readSettings();
-  const previous = destination;
+  const h = trackHeight();
+  const current = y;
   const roll = Math.random();
 
-  if (roll < 0.20) destination = 0;
-  else if (roll < 0.40) destination = 1;
-  else destination = random(0.05, 0.95);
+  // 0 = very top, h = very bottom. The point travels there; it NEVER jumps there.
+  if (roll < 0.20) targetY = 0;
+  else if (roll < 0.40) targetY = h;
+  else targetY = random(h * 0.05, h * 0.95);
 
-  if (Math.abs(destination - previous) < 0.08) {
-    destination = previous < 0.5 ? random(0.60, 0.95) : random(0.05, 0.40);
+  // Avoid a destination too close to the current position.
+  if (Math.abs(targetY - current) < h * 0.08) {
+    targetY = current < h / 2 ? random(h * 0.60, h * 0.95) : random(h * 0.05, h * 0.40);
   }
 
-  // Decide whether to stop after reaching this destination.
-  pauseAfterArrival = Math.random() <= s.pauseChance;
-  phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
+  pauseAfterArrival = Math.random() <= readSettings().pauseChance;
+  phaseEl.textContent = targetY > y ? 'MOVING DOWN' : 'MOVING UP';
 }
 
 function beginPause(now) {
   const s = readSettings();
-  const min = Math.min(s.minPause, s.maxPause);
-  const max = Math.max(s.minPause, s.maxPause);
-  pauseUntil = now + random(min, max) * 1000;
+  pauseUntil = now + random(Math.min(s.minPause, s.maxPause), Math.max(s.minPause, s.maxPause)) * 1000;
   paused = true;
   marker.classList.add('paused');
   phaseEl.textContent = 'PAUSED';
 }
 
-function updateUI() {
-  // Only this one place writes the marker position.
-  // It uses a single CSS property every frame, so there is no second animation fighting it.
-  marker.style.top = `${(1 - position) * 100}%`;
-  positionEl.textContent = `${Math.round(position * 100)}%`;
-  speedEl.textContent = `${speed.toFixed(2)}×`;
-}
-
 function frame(now) {
   if (!lastTime) lastTime = now;
-  const dt = Math.min(50, Math.max(0, now - lastTime));
+  const dt = Math.min(50, Math.max(0, now - lastTime)) / 1000;
   lastTime = now;
 
   if (running && !paused) {
     if (now >= nextSpeedChange) chooseSpeed(now);
 
-    // Smooth speed changes, never a position jump.
-    const smoothing = 1 - Math.exp(-dt / 800);
-    speed += (targetSpeed - speed) * smoothing;
+    // Smoothly change speed, but NEVER change y by a random amount.
+    speed += (targetSpeed - speed) * (1 - Math.exp(-dt / 0.8));
 
-    const distance = destination - position;
-    const pixelsPerSecond = 140 * speed;
+    const distance = targetY - y;
+    const maxStep = speed * dt;
 
-    // Move in continuous time toward the destination.
-    // The final frame is clamped only to the destination itself.
-    if (Math.abs(distance) > 0.000001) {
-      const viewport = Math.max(1, marker.parentElement?.clientHeight || window.innerHeight);
-      const normalizedStep = (pixelsPerSecond * dt / 1000) / viewport;
-      const step = Math.min(Math.abs(distance), normalizedStep);
-      position += Math.sign(distance) * step;
+    if (Math.abs(distance) > 0.01) {
+      // Continuous movement. Maximum movement per frame is speed * time.
+      y += Math.sign(distance) * Math.min(Math.abs(distance), maxStep);
     }
 
-    if (Math.abs(destination - position) <= 0.000001) {
-      position = destination;
+    if (Math.abs(targetY - y) <= 0.01) {
+      y = targetY;
       if (pauseAfterArrival) beginPause(now);
       else chooseDestination(now);
     }
@@ -126,24 +117,24 @@ function frame(now) {
     paused = false;
     marker.classList.remove('paused');
     chooseDestination(now);
-    phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
   }
 
-  updateUI();
+  setMarkerPixelPosition();
   requestAnimationFrame(frame);
 }
 
 function start() {
+  const h = trackHeight();
+  // Start exactly where the marker is visually displayed.
+  y = Math.max(0, Math.min(h, y));
   running = true;
   paused = false;
   marker.classList.remove('paused');
-
   const now = performance.now();
   lastTime = now;
   chooseSpeed(now);
   speed = targetSpeed;
   chooseDestination(now);
-
   statusEl.textContent = 'RUNNING';
   startBtn.disabled = true;
   pauseBtn.disabled = false;
@@ -152,7 +143,6 @@ function start() {
 
 function togglePause() {
   if (!running) return;
-
   paused = !paused;
   if (paused) {
     pauseUntil = Infinity;
@@ -164,7 +154,7 @@ function togglePause() {
     paused = false;
     marker.classList.remove('paused');
     lastTime = performance.now();
-    phaseEl.textContent = destination > position ? 'MOVING UP' : 'MOVING DOWN';
+    phaseEl.textContent = targetY > y ? 'MOVING DOWN' : 'MOVING UP';
     pauseBtn.textContent = 'PAUSE';
     statusEl.textContent = 'RUNNING';
   }
@@ -174,19 +164,17 @@ function reset() {
   running = false;
   paused = false;
   pauseUntil = 0;
-  position = 0.5;
-  destination = 0.5;
-  speed = 1;
-  targetSpeed = 1;
-  pauseAfterArrival = false;
-
+  y = trackHeight() / 2;
+  targetY = y;
+  speed = 120;
+  targetSpeed = 120;
   marker.classList.remove('paused');
   statusEl.textContent = 'READY';
   phaseEl.textContent = 'READY';
   startBtn.disabled = false;
   pauseBtn.disabled = true;
   pauseBtn.textContent = 'PAUSE';
-  updateUI();
+  setMarkerPixelPosition();
 }
 
 function updateOutputs() {
@@ -199,10 +187,11 @@ function updateOutputs() {
 }
 
 Object.values(settings).forEach(input => input.addEventListener('input', updateOutputs));
+window.addEventListener('resize', () => { y = Math.max(0, Math.min(trackHeight(), y)); setMarkerPixelPosition(); });
 startBtn.addEventListener('click', start);
 pauseBtn.addEventListener('click', togglePause);
 resetBtn.addEventListener('click', reset);
 
+reset();
 updateOutputs();
-updateUI();
 requestAnimationFrame(frame);
