@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#090611">
 <meta name="description" content="Entraîneur de rythme et de profondeur pour adultes.">
 <title>Rhythm Flow</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260821">
 </head>
 <body>
 <main class="app">
@@ -37,10 +37,10 @@
 </section>
 <section class="progress-wrap"><div class="progress-meta"><span>PROGRESSION DE LA SÉANCE</span><span id="elapsed">00:00</span></div><div class="progress-bar"><span id="progressFill"></span></div></section>
 <section class="controls">
-<button class="primary" id="startBtn">START</button><button class="secondary" id="pauseBtn" disabled>PAUSE</button><button class="secondary" id="resetBtn">RESET</button>
+<button type="button" class="primary" id="startBtn">START</button><button type="button" class="secondary" id="pauseBtn" disabled>PAUSE</button><button type="button" class="secondary" id="resetBtn">RESET</button>
 </section>
 <section class="quick-presets" aria-label="Séances rapides">
-<button data-preset="soft">Douceur</button><button data-preset="beginner">Débutant</button><button data-preset="rhythm">Rythme</button><button data-preset="intense">Intense</button><button data-preset="random">Aléatoire</button>
+<button type="button" data-preset="soft">Douceur</button><button type="button" data-preset="beginner">Débutant</button><button type="button" data-preset="rhythm">Rythme</button><button type="button" data-preset="intense">Intense</button><button type="button" data-preset="random">Aléatoire</button>
 </section>
 <details class="settings" open><summary>Réglages avancés</summary>
 <div class="setting-grid">
@@ -58,7 +58,7 @@
 <label class="toggle">Vibrations<input id="haptics" type="checkbox"><span></span></label>
 <label class="toggle">Animations réduites<input id="reduceMotion" type="checkbox"><span></span></label>
 </div></details>
-<section class="summary" id="summary" hidden><h2>Séance terminée</h2><div id="summaryStats"></div><button id="restartBtn" class="primary">RECOMMENCER</button></section>
+<section class="summary" id="summary" hidden><h2>Séance terminée</h2><div id="summaryStats"></div><button type="button" id="restartBtn" class="primary">RECOMMENCER</button></section>
 </main>
-<script src="script.js"></script>
+<script src="script.js?v=20260821" defer></script>
 </body></html>
